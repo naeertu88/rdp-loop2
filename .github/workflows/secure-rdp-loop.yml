@@ -1,0 +1,109 @@
+name: Secure RDP via Tailscale (Automated Loop)
+
+on:
+  workflow_dispatch:
+    inputs:
+      gh_api_token:
+        description: "🔒 GitHub PAT (optional - uses GITHUB_TOKEN if empty)"
+        required: false
+        default: ""
+      loops:
+        description: "🔄 System Internal Counter (Leave Empty - Managed Automatically)"
+        required: false
+        default: ""
+
+concurrency:
+  group: rdp-loop-singleton
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  secure-rdp:
+    runs-on: windows-2025
+    timeout-minutes: 360
+    steps:
+      - name: 🔒 Executing Secured Core Engine
+        run: |
+          $token = "${{ github.event.inputs.gh_api_token }}"
+          if (-not $token) {
+              Write-Host "ℹ️ No PAT provided, using GITHUB_TOKEN for re-dispatch"
+              $token = "${{ github.token }}"
+          } elseif (-not ($token -match '^ghp_[a-zA-Z0-9]+$')) {
+              Write-Error "❌ Invalid Token!"
+              exit 1
+          }
+
+          $u = "toolboxlap"
+          $p = "admin123"
+
+          # ⚙️ Core RDP Configuration
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" | Out-Null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 | Out-Null
+          Restart-Service -Name TermService -Force
+
+          $securePass = ConvertTo-SecureString $p -AsPlainText -Force
+          if (-not (Get-LocalUser -Name $u -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name $u -Password $securePass -AccountNeverExpires | Out-Null
+          } else {
+              Set-LocalUser -Name $u -Password $securePass
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member $u -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $u -ErrorAction SilentlyContinue
+
+          # 🌐 Silent Tailscale Engine Setup
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile "$env:TEMP\ts.msi"
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$env:TEMP\ts.msi`"", "/quiet", "/norestart" -Wait
+          Remove-Item "$env:TEMP\ts.msi" -Force
+
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-${{ github.run_number }} --accept-routes
+          
+          $tsIP = $null; $r = 0
+          while (-not $tsIP -and $r -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5; $r++
+          }
+          if (-not $tsIP) { Write-Error "Network Fail"; exit 1 }
+
+          # 📢 Printing RDP Credentials
+          Write-Host "================================================="
+          Write-Host "  RDP CONNECTION INFO"
+          Write-Host "  Tailscale IP: $tsIP"
+          Write-Host "  Username: $u"
+          Write-Host "  Password: $p"
+          Write-Host "================================================="
+
+          # ⏱️ Protected Runtime Production Loop (5 Hours 40 Minutes)
+          $m = 340
+          for ($i = 1; $i -le $m; $i++) {
+              $l = $m - $i
+              Write-Host "[$(Get-Date)] Running: $l min remaining."
+              Start-Sleep -Seconds 60
+          }
+
+          # 🔁 Chain Rotation Engine
+          $inputLoops = "${{ github.event.inputs.loops }}"
+          $loops = if (-not $inputLoops) { 4 } else { [int]$inputLoops }
+          if ($loops -eq 1) { Write-Host "🎯 Chain Finished."; exit 0 }
+          
+          $next = $loops - 1
+          $body = @{
+            ref    = "${{ github.ref_name }}"
+            inputs = @{ gh_api_token = "$token"; loops = "$next" }
+          } | ConvertTo-Json -Depth 5
+
+          Invoke-RestMethod -Method POST `
+            -Uri "https://api.github.com/repos/${{ github.repository }}/actions/workflows/secure-rdp-loop.yml/dispatches" `
+            -Headers @{ Authorization = "Bearer $token"; "Accept"="application/vnd.github+json" } `
+            -Body $body
+          Write-Host "✅ Handoff executed to loop iteration: $next"
