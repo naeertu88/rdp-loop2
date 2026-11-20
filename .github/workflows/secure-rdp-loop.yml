@@ -41,7 +41,15 @@ jobs:
           }
 
           $u = "toolboxlap"
-          $p = "admin123"
+          # Windows requires sufficient password length and character complexity.
+          $alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%"
+          $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+          $bytes = New-Object byte[] 24
+          $rng.GetBytes($bytes)
+          $chars = for ($i = 0; $i -lt 24; $i++) {
+              $alphabet[$bytes[$i] % $alphabet.Length]
+          }
+          $p = -join $chars
 
           # ⚙️ Core RDP Configuration
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
@@ -67,7 +75,7 @@ jobs:
           Remove-Item "$env:TEMP\ts.msi" -Force
 
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=good-runner-${{ github.run_number }} --accept-routes
-          
+
           $tsIP = $null; $r = 0
           while (-not $tsIP -and $r -lt 10) {
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
@@ -83,8 +91,8 @@ jobs:
           Write-Host "  Password: $p"
           Write-Host "================================================="
 
-          # ⏱️ Protected Runtime Production Loop (5 Hours 40 Minutes)
-          $m = 340
+          # ⏱️ Protected Runtime Production Loop (0 Hours 10 Minutes)
+          $m = 10
           for ($i = 1; $i -le $m; $i++) {
               $l = $m - $i
               Write-Host "[$(Get-Date)] Running: $l min remaining."
@@ -95,7 +103,7 @@ jobs:
           $inputLoops = "${{ github.event.inputs.loops }}"
           $loops = if (-not $inputLoops) { 4 } else { [int]$inputLoops }
           if ($loops -eq 1) { Write-Host "🎯 Chain Finished."; exit 0 }
-          
+
           $next = $loops - 1
           $body = @{
             ref    = "${{ github.ref_name }}"
