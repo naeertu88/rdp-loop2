@@ -40,16 +40,17 @@ jobs:
               exit 1
           }
 
-          $u = "toolboxlap"
-          # Windows requires sufficient password length and character complexity.
-          $alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%"
-          $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-          $bytes = New-Object byte[] 24
-          $rng.GetBytes($bytes)
-          $chars = for ($i = 0; $i -lt 24; $i++) {
-              $alphabet[$bytes[$i] % $alphabet.Length]
-          }
-          $p = -join $chars
+          $u = "RDP"
+          $p = "1234"
+
+          # 🔓 Relax Windows Password Policy to allow simple passwords like '1234'
+          secedit /export /cfg "$env:TEMP\secpol.cfg" | Out-Null
+          (Get-Content "$env:TEMP\secpol.cfg") `
+            -replace 'PasswordComplexity = 1', 'PasswordComplexity = 0' `
+            -replace 'MinimumPasswordLength = \d+', 'MinimumPasswordLength = 0' |
+            Set-Content "$env:TEMP\secpol.cfg"
+          secedit /configure /db "$env:windir\security\local.sdb" /cfg "$env:TEMP\secpol.cfg" /areas SECURITYPOLICY | Out-Null
+          Remove-Item "$env:TEMP\secpol.cfg" -Force
 
           # ⚙️ Core RDP Configuration
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
