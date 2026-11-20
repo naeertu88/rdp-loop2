@@ -83,8 +83,8 @@ jobs:
           Write-Host "  Password: $p"
           Write-Host "================================================="
 
-          # ⏱️ Protected Runtime Production Loop (0 Hours 10 Minutes)
-          $m = 10
+          # ⏱️ Protected Runtime Production Loop (2 Hours 0 Minutes)
+          $m = 120
           for ($i = 1; $i -le $m; $i++) {
               $l = $m - $i
               Write-Host "[$(Get-Date)] Running: $l min remaining."
